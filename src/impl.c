@@ -181,6 +181,7 @@ static bool add_peer(struct rpata *ctx, char *uuid, char *ipaddr)
 	head->next = peer;
 
 ret_true:
+	++ctx->nr_peers;
 	if(ctx->cbacks && ctx->cbacks->peer_joined)
 		ctx->cbacks->peer_joined(ipaddr);
 
@@ -199,17 +200,44 @@ static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 	return true;
 }
 
+static char *get_ipaddr(struct rpata *ctx)
+{
+	for(int i = 0;i < ctx->ips->nr_ips; ++i)
+		if(0 == strcmp(ctx->ips->ips[i].name, ctx->iface))
+			return ctx->ips->ips[i].addr;
+
+	return ctx->ips->ips[0].addr;
+}
+
+void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
+{
+	strcpy(ip, peer[pos].ipaddr);
+}
+void rpata_getpeers(struct rpata *ctx, struct rpata_peer **peers, int *num)
+{
+	*peers = calloc(ctx->nr_peers, sizeof *peers);
+	if(!*peers)
+		return;
+
+	*num = ctx->nr_peers;
+	memset(*peers, 0, *num * sizeof *peers);
+	struct rpata_peer *head = ctx->peers;
+	for(int i = 0; i < *num; ++i, head = head->next){
+		(*peers)[i].ipaddr = strdup(head->ipaddr);
+		/**FIXME: Add more fields */
+	}
+
+}
+
 static void process_send(struct rpata *ctx)
 {
-	static int seq = 0;
 	struct rpata_msg msg;
-	msg.magic = seq++;
+	msg.magic = rpata_magic;
 	char uuid_str[37];
         uuid_unparse_lower(ctx->guid, uuid_str);
 	strcpy(msg.guid, uuid_str);
-	strcpy(msg.ip, ctx->ips->ips[0].addr);
+	strcpy(msg.ip, get_ipaddr(ctx));
 	send_mcast(ctx, &msg);
-/*	printf("[send] %s, seq %d\n", uuid_str, msg.magic); */
 }
 
 static void process_recv(struct rpata *ctx)
@@ -229,7 +257,6 @@ static void process_recv(struct rpata *ctx)
 		pthread_mutex_unlock(&ctx->mutex);
 	}
 
-/*	printf("[recv] %s, seq=%d\n", msg->guid, msg->magic); */
 	free(msg);
 }
 
@@ -294,6 +321,7 @@ static bool add_iface(struct rpata *ctx, char *iface)
 	for(i = 0; i < ips->nr_ips; ++i){
 		if(ips->ips[i].addr && 
 				ifacecmp(iface, ips->ips[i].name)){
+			ctx->iface = strdup(iface);
 			ret = true;
 			break;
 		}

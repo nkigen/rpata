@@ -5,6 +5,7 @@
 
 #include <rpata.h>
 
+static const int const rpata_magic = 111;
 
 enum{
 	RPATA_MCAST_PORT=17000,
@@ -37,6 +38,7 @@ struct rpata{
 	uuid_t guid;			/**< Globally unique identifier */
 	struct rpata_ipaddr *ips;	/**< IP addresses associated to the node */
 	char *mcast;			/**< Multicast address to use */
+	char *iface;			/**< Network interface to use */
 
 	bool start;			/**< Service already started */
 	uint16_t mcast_port;		/**< Multicast Port */

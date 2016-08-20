@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <rpata.h>
 #include <unistd.h>
 
@@ -19,16 +20,30 @@ int main()
 	}
 
 	if(rpata_setopt(ctx, USE_MCAST_ADDR, "225.0.0.37") &&
-			rpata_setopt(ctx, USE_MCAST_PORT, "18000"))
+			rpata_setopt(ctx, USE_MCAST_PORT, "18000") &&
+			rpata_setopt(ctx, USE_IFACE, "wlo1")){
 		printf("all set\n");
-	else
+	}
+	else{
 		printf("all NOT set!!\n");
+		return -1;
+	}
 
 	rpata_setcallback(ctx, &cback); 
 	rpata_start(ctx);
 
-	while(1)
-		sleep(3);
+	while(1){
+		struct rpata_peer *peers = NULL;
+		int num;
+		rpata_getpeers(ctx, &peers, &num);
+		char ip[20];
+		for(int i = 0; i < num; ++i){
+			rpata_peer_getipaddr(peers, ip, i);
+			printf("ip %s\n", ip);
+		}
+		free(peers);
+		sleep(10);
+	}
 
 	return 0;
 }
