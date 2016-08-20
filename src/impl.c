@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <sys/sysinfo.h>
+#include <sys/types.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -12,24 +13,29 @@
 #include <rpata.h>
 #include "impl.h"
 
-static bool ipaddr_init(struct ipaddr *ip)
+struct rpata_msg{
+	int y;
+};
+
+static bool ipaddr_init(struct rpata_ipaddr **ip)
 {
 	FILE *fp = popen("ls -A /sys/class/net", "r");
 	if(!fp)
-		return -1;
+		return false;
 
 	char out[10];
-	ip->nlen = 0;
+	(*ip)->nr_ips = 0;
 	while(fgets(out, 9, fp))
-		++ip->nlen;
+		++(*ip)->nr_ips;
 
-	if(!ip->nlen)
+	if(!(*ip)->nr_ips)
 		return false;
 
-	ip->ips = calloc(ip->nlen, sizeof *ip->ips);
-	if(!ip->ips)
+	(*ip)->ips = calloc((*ip)->nr_ips, sizeof *(*ip)->ips);
+	if(!(*ip)->ips)
 		return false;
 
+	memset((*ip)->ips, 0, (*ip)->nr_ips * sizeof *(*ip)->ips);
 	return true;
 }
 
@@ -39,78 +45,226 @@ static bool iface_init(struct rpata *ctx)
 	if(!ctx->ips)
 		return false;
 
-	if(!ipaddr_init(ctx->ips))
+	if(!ipaddr_init(&ctx->ips))
 		return false;
 
-	struct ifaddrs *ifaddr, *ifa;
+	struct ifaddrs *ifaddr = NULL;
+	struct ifaddrs *ifa = NULL;
 	char host[NI_MAXHOST];
-	int s, i;
+	int s = 0;
+	int i = 0;
 
 	if(-1 == getifaddrs(&ifaddr))
 		return false;
 
-	for(ifa = ifaddr, i = 0; ifa != NULL; ifa = ifa->ifa_next, ++i) {
-		if(NULL == ifa->ifa_addr)
+	for(ifa = ifaddr, i = 0; ifa != NULL; ifa = ifa->ifa_next) {
+		if(NULL == ifa->ifa_addr){
 			continue;
+		}
 
 		s = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
 
 		if (ifa->ifa_addr->sa_family == AF_INET) {
 			if (0 != s) {
-				goto err_getnameinfo;
+				freeifaddrs(ifaddr);
+				return false;
 			}
 
-			printf("name %s ipaddr %s\n", ifa->ifa_name, host);
-
-			strcpy(ctx->ips->ips[i].name, ifa->ifa_name);
+			ctx->ips->ips[i].name = strdup(ifa->ifa_name);
 			ctx->ips->ips[i].addr = strdup(host);
+			++i;
 		}
 	}
 
 	freeifaddrs(ifaddr);
-
 	return true; 
-
-err_getnameinfo:
-err_ifaddrs:
-	return false;
 }	
 
-/*
-static void guid_init(char *guid)
+static void guid_init(uuid_t *guid)
 {
- 	//cat /proc/sys/kernel/random/uuid
-
+	uuid_generate_time_safe(*guid);
 }
 
-static void ipaddr_init(struct ipaddr *ips)
+static void timespec_add_ms(struct timespec *t, uint16_t ms)
 {
+	t->tv_sec += ms / 1000;
+	t->tv_nsec += (ms % 1000) * 1000000;
 
+	/* nanosecond - second overflow */
+	if (t->tv_nsec > 1000000000) {
+		t->tv_nsec -= 1000000000;
+		t->tv_sec += 1;
+	}
+}
+
+static void get_bcastaddr(struct _ip *ip, char *bcast)
+{
+	if(0 == strcmp(ip->name,"lo")){
+		strcpy(bcast, "127.255.255.255");
+		return;
+	}
+
+	int n1,n2,n3;
+	sscanf(ip->addr,"%d.%d.%d",&n1,&n2,&n3);
+	sprintf(bcast,"%d.%d.%d.255",n1,n2,n3);
+}
+
+static bool send_init(struct rpata *ctx)
+{
+	if ((ctx->send_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+		perror("socket");
+		return false;
+	}
+
+	memset(&ctx->send_addr, 0, sizeof ctx->send_addr);
+	ctx->send_addr.sin_family = AF_INET;
+	ctx->send_addr.sin_addr.s_addr = inet_addr(ctx->mcast);
+	ctx->send_addr.sin_port = htons(18000);
+}
+
+static bool recv_init(struct rpata *ctx)
+{
+	int nbytes,addrlen;
+	struct ip_mreq mreq;
+	char msgbuf[512];
+
+	if ((ctx->recv_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+		perror("socket");
+		return false;
+	}
+	int yes = 1;
+
+	if (setsockopt(ctx->recv_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0) {
+		perror("Reusing ADDR failed");
+		return false;
+	}
+
+	memset(&ctx->recv_addr, 0, sizeof ctx->recv_addr);
+	ctx->recv_addr.sin_family = AF_INET;
+	ctx->recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	ctx->recv_addr.sin_port = htons(18000);
+
+	if (bind(ctx->recv_fd, (struct sockaddr *)&ctx->recv_addr, sizeof ctx->recv_addr) < 0) {
+		perror("bind");
+		return false;
+	}
+
+	mreq.imr_multiaddr.s_addr = inet_addr(ctx->mcast);
+	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+	if (setsockopt(ctx->recv_fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof mreq) < 0) {
+		perror("setsockopt");
+		return false;
+	}
+}
+
+static void send_mcast(struct rpata *ctx, struct rpata_msg *msg)
+{
+	if (sendto(ctx->send_fd, msg, sizeof *msg, 0, (struct sockaddr *)&ctx->send_addr, sizeof ctx->send_addr) < 0) {
+		perror("sendto");
+	}
+}
+
+static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg)
+{
+	int nbytes, addrlen;
+	addrlen = sizeof ctx->recv_addr;
+	if ((nbytes = recvfrom(ctx->recv_fd, msg, sizeof *msg, 0, (struct sockaddr *)&ctx->recv_addr, &addrlen)) < 0) {
+		perror("recvfrom");
+	}
 }
 
 static void *periodic(void *data)
 {
+	struct rpata *ctx = data;
 
+	char bcast[32];
+	get_bcastaddr(&ctx->ips->ips[1], bcast);
+
+	printf("bcast %s\n", bcast);
+
+#if 0
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+
+	timespec_add_ms(&t, 2000);
+
+	while(1) {
+
+		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
+		timespec_add_ms(&t, 2000);
+	}
+#endif
 }
 
-*/
 struct rpata *rpata_init()
 {
 	struct rpata *ctx = malloc(sizeof *ctx);
 	if(!ctx)
 		return NULL;
 
+	ctx->mcast = NULL;
+
 	iface_init(ctx);
-/*
-	guid_init(ctx->guid);	
+	guid_init(&ctx->guid);	
 
-	pthread_mutex_init(&ctx->mutex, NULL);
+	return ctx;
+}
 
-	if(pthread_create(&ctx->thread, NULL, periodic, ctx)){
-		free(ctx);
-		return NULL
+static bool ifacecmp(const char *i1, const char *i2)
+{
+	return 0 == strcmp(i1, i2);
+}
+
+static bool add_iface(struct rpata *ctx, char *iface)
+{
+	struct rpata_ipaddr *ips = ctx->ips;
+	if(!ips)
+		return false;
+
+	bool ret = false;
+	int i;
+	for(i = 0; i < ips->nr_ips; ++i){
+		if(ips->ips[i].addr && 
+				ifacecmp(iface, ips->ips[i].name)){
+			ret = true;
+			break;
+		}
 	}
 
-	*/
-	return ctx;
+	return ret;
+}
+
+static bool set_mcastaddr(struct rpata *ctx, char *addr)
+{
+	if(ctx->mcast)
+		free(ctx->mcast);
+
+	ctx->mcast = strdup(addr);
+
+	return true;
+}
+
+bool rpata_setopt(struct rpata *ctx, int opt, char *val)
+{
+	bool ret = false;
+	switch(opt){
+		case USE_IFACE:
+			ret = add_iface(ctx, val);
+			break;
+		case MCAST_ADDR:
+			ret = set_mcastaddr(ctx, val);
+		default:
+			ret = false;
+	};
+
+	return ret;
+}
+
+bool rpata_start(struct rpata *ctx)
+{
+	if(pthread_create(&ctx->thread, NULL, periodic, ctx)){
+		return false;
+	}
+
+	return true;
 }
