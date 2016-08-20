@@ -13,11 +13,6 @@
 #include <rpata.h>
 #include "impl.h"
 
-struct rpata_msg{
-	uint8_t magic;
-	char guid[37];
-};
-
 static bool ipaddr_init(struct rpata_ipaddr **ip)
 {
 	FILE *fp = popen("ls -A /sys/class/net", "r");
@@ -174,6 +169,44 @@ static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg)
 	}
 }
 
+static bool add_peer(struct rpata *ctx, char *uuid, char *ipaddr)
+{
+	struct rpata_peer *head = ctx->peers;
+	
+	struct rpata_peer *peer = malloc(sizeof *peer);
+	if(!peer)
+		return false;
+
+	uuid_parse(uuid, peer->guid);
+	peer->ipaddr = ipaddr;
+	peer->next = NULL;
+
+	if(!head){
+		ctx->peers = peer;
+		printf("new peer: uuid=%s, ip=%s\n", uuid, ipaddr);
+		return true;
+	}
+
+	while(head->next)
+		head = head->next;
+	head->next = peer;
+
+	printf("new peer: uuid=%s, ip=%s\n", uuid, ipaddr);
+	return true;
+}
+
+static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
+{
+	struct rpata_peer *head = ctx->peers;
+	while(head){
+		if(0 == uuid_compare(uuid, head->guid))
+			return false;
+		head = head->next;
+	}
+
+	return true;
+}
+
 static void process_recv(struct rpata *ctx)
 {
 	struct rpata_msg *msg = malloc(sizeof *msg);
@@ -183,7 +216,10 @@ static void process_recv(struct rpata *ctx)
 	if(!uuid_compare(uuid, ctx->guid))
 		goto err_mine;
 
-	printf("[recv] %s\n", msg->guid);
+	if(is_peer_new(ctx, uuid))
+		add_peer(ctx, msg->guid, msg->ip);
+
+	//printf("[recv] %s\n", msg->guid);
 	fflush(stdout);
 
 err_mine:
@@ -194,11 +230,12 @@ static void process_send(struct rpata *ctx)
 {
 	struct rpata_msg msg;
 	msg.magic = 111;
-	char uuid_str[37];      // ex. "1b4e28ba-2fa1-11d2-883f-0016d3cca427" + "\0"
+	char uuid_str[37];
         uuid_unparse_lower(ctx->guid, uuid_str);
 	strcpy(msg.guid, uuid_str);
+	strcpy(msg.ip, ctx->ips->ips[0].addr);
 	send_mcast(ctx, &msg);
-	printf("[send]\n");
+	//printf("[send]\n");
 }
 
 static void *periodic(void *data)
@@ -210,14 +247,14 @@ static void *periodic(void *data)
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 
-	timespec_add_ms(&t, 2000);
+	timespec_add_ms(&t, 200);
 
 	while(1) {
 		process_send(ctx);
 		process_recv(ctx);
 
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
-		timespec_add_ms(&t, 2000);
+		timespec_add_ms(&t, 200);
 	}
 #endif
 }
@@ -229,6 +266,8 @@ struct rpata *rpata_init()
 		return NULL;
 
 	ctx->mcast = NULL;
+	ctx->nr_peers = 0;
+	ctx->peers = NULL;
 
 	iface_init(ctx);
 	guid_init(&ctx->guid);	
