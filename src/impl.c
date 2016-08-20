@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include <sys/sysinfo.h>
 #include <sys/types.h>
@@ -85,24 +86,10 @@ static void timespec_add_ms(struct timespec *t, uint16_t ms)
 {
 	t->tv_sec += ms / 1000;
 	t->tv_nsec += (ms % 1000) * 1000000;
-
-	/* nanosecond - second overflow */
 	if (t->tv_nsec > 1000000000) {
 		t->tv_nsec -= 1000000000;
 		t->tv_sec += 1;
 	}
-}
-
-static void get_bcastaddr(struct _ip *ip, char *bcast)
-{
-	if(0 == strcmp(ip->name,"lo")){
-		strcpy(bcast, "127.255.255.255");
-		return;
-	}
-
-	int n1,n2,n3;
-	sscanf(ip->addr,"%d.%d.%d",&n1,&n2,&n3);
-	sprintf(bcast,"%d.%d.%d.255",n1,n2,n3);
 }
 
 static bool send_init(struct rpata *ctx)
@@ -115,21 +102,21 @@ static bool send_init(struct rpata *ctx)
 	memset(&ctx->send_addr, 0, sizeof ctx->send_addr);
 	ctx->send_addr.sin_family = AF_INET;
 	ctx->send_addr.sin_addr.s_addr = inet_addr(ctx->mcast);
-	ctx->send_addr.sin_port = htons(18000);
+	ctx->send_addr.sin_port = htons(ctx->mcast_port);
+
+	return true;
 }
 
 static bool recv_init(struct rpata *ctx)
 {
-	int nbytes,addrlen;
 	struct ip_mreq mreq;
-	char msgbuf[512];
 
 	if ((ctx->recv_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
 		perror("socket");
 		return false;
 	}
-	int yes = 1;
 
+	int yes = 1;
 	if (setsockopt(ctx->recv_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) < 0) {
 		perror("Reusing ADDR failed");
 		return false;
@@ -138,7 +125,7 @@ static bool recv_init(struct rpata *ctx)
 	memset(&ctx->recv_addr, 0, sizeof ctx->recv_addr);
 	ctx->recv_addr.sin_family = AF_INET;
 	ctx->recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	ctx->recv_addr.sin_port = htons(18000);
+	ctx->recv_addr.sin_port = htons(ctx->mcast_port);
 
 	if (bind(ctx->recv_fd, (struct sockaddr *)&ctx->recv_addr, sizeof ctx->recv_addr) < 0) {
 		perror("bind");
@@ -151,6 +138,8 @@ static bool recv_init(struct rpata *ctx)
 		perror("setsockopt");
 		return false;
 	}
+
+	return true;
 }
 
 static void send_mcast(struct rpata *ctx, struct rpata_msg *msg)
@@ -162,8 +151,9 @@ static void send_mcast(struct rpata *ctx, struct rpata_msg *msg)
 
 static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg)
 {
-	int nbytes, addrlen;
-	addrlen = sizeof ctx->recv_addr;
+	int nbytes;
+	socklen_t addrlen = sizeof ctx->recv_addr;
+
 	if ((nbytes = recvfrom(ctx->recv_fd, msg, sizeof *msg, 0, (struct sockaddr *)&ctx->recv_addr, &addrlen)) < 0) {
 		perror("recvfrom");
 	}
@@ -183,15 +173,17 @@ static bool add_peer(struct rpata *ctx, char *uuid, char *ipaddr)
 
 	if(!head){
 		ctx->peers = peer;
-		printf("new peer: uuid=%s, ip=%s\n", uuid, ipaddr);
-		return true;
+		goto ret_true;
 	}
 
 	while(head->next)
 		head = head->next;
 	head->next = peer;
 
-	printf("new peer: uuid=%s, ip=%s\n", uuid, ipaddr);
+ret_true:
+	if(ctx->cbacks && ctx->cbacks->peer_joined)
+		ctx->cbacks->peer_joined(ipaddr);
+
 	return true;
 }
 
@@ -207,56 +199,70 @@ static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 	return true;
 }
 
+static void process_send(struct rpata *ctx)
+{
+	static int seq = 0;
+	struct rpata_msg msg;
+	msg.magic = seq++;
+	char uuid_str[37];
+        uuid_unparse_lower(ctx->guid, uuid_str);
+	strcpy(msg.guid, uuid_str);
+	strcpy(msg.ip, ctx->ips->ips[0].addr);
+	send_mcast(ctx, &msg);
+/*	printf("[send] %s, seq %d\n", uuid_str, msg.magic); */
+}
+
 static void process_recv(struct rpata *ctx)
 {
 	struct rpata_msg *msg = malloc(sizeof *msg);
 	recv_mcast(ctx, msg);
 	uuid_t uuid;
 	uuid_parse(msg->guid, uuid);
-	if(!uuid_compare(uuid, ctx->guid))
-		goto err_mine;
+	while(!uuid_compare(uuid, ctx->guid)){
+		recv_mcast(ctx, msg);
+		uuid_parse(msg->guid, uuid);
+	}
 
-	if(is_peer_new(ctx, uuid))
+	if(is_peer_new(ctx, uuid)){
+		pthread_mutex_lock(&ctx->mutex);
 		add_peer(ctx, msg->guid, msg->ip);
+		pthread_mutex_unlock(&ctx->mutex);
+	}
 
-	//printf("[recv] %s\n", msg->guid);
-	fflush(stdout);
-
-err_mine:
+/*	printf("[recv] %s, seq=%d\n", msg->guid, msg->magic); */
 	free(msg);
-}
-
-static void process_send(struct rpata *ctx)
-{
-	struct rpata_msg msg;
-	msg.magic = 111;
-	char uuid_str[37];
-        uuid_unparse_lower(ctx->guid, uuid_str);
-	strcpy(msg.guid, uuid_str);
-	strcpy(msg.ip, ctx->ips->ips[0].addr);
-	send_mcast(ctx, &msg);
-	//printf("[send]\n");
 }
 
 static void *periodic(void *data)
 {
 	struct rpata *ctx = data;
-#if 1
+
 	send_init(ctx);
 	recv_init(ctx);
+
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
-
-	timespec_add_ms(&t, 200);
-
+	timespec_add_ms(&t, 1000);
 	while(1) {
 		process_send(ctx);
 		process_recv(ctx);
-
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
-		timespec_add_ms(&t, 200);
+		timespec_add_ms(&t, 1000);
 	}
-#endif
+
+	return NULL;
+}
+
+static void rpata_defaults(struct rpata *ctx)
+{
+	ctx->mcast = NULL;
+	ctx->peers = NULL;
+	ctx->nr_peers = 0;
+	ctx->mcast_port = RPATA_MCAST_PORT;
+	ctx->start = false;
+
+	ctx->cbacks = NULL;
+	pthread_mutex_init(&ctx->mutex, NULL);
 }
 
 struct rpata *rpata_init()
@@ -264,11 +270,8 @@ struct rpata *rpata_init()
 	struct rpata *ctx = malloc(sizeof *ctx);
 	if(!ctx)
 		return NULL;
-
-	ctx->mcast = NULL;
-	ctx->nr_peers = 0;
-	ctx->peers = NULL;
-
+	
+	rpata_defaults(ctx);
 	iface_init(ctx);
 	guid_init(&ctx->guid);	
 
@@ -309,15 +312,27 @@ static bool set_mcastaddr(struct rpata *ctx, char *addr)
 	return true;
 }
 
+static bool set_mcastport(struct rpata *ctx, char *port)
+{
+	ctx->mcast_port = atoi(port);
+	return true;
+}
+
 bool rpata_setopt(struct rpata *ctx, int opt, char *val)
 {
+	if(ctx->start)
+		return false;
+
 	bool ret = false;
 	switch(opt){
 		case USE_IFACE:
 			ret = add_iface(ctx, val);
 			break;
-		case MCAST_ADDR:
+		case USE_MCAST_ADDR:
 			ret = set_mcastaddr(ctx, val);
+			break;
+		case USE_MCAST_PORT:
+			ret = set_mcastport(ctx, val);
 			break;
 		default:
 			ret = false;
@@ -326,11 +341,47 @@ bool rpata_setopt(struct rpata *ctx, int opt, char *val)
 	return ret;
 }
 
+void rpata_setcallback(struct rpata *ctx, struct rpata_callback *cback)
+{
+	ctx->cbacks = cback;
+}
+
 bool rpata_start(struct rpata *ctx)
 {
 	if(pthread_create(&ctx->thread, NULL, periodic, ctx)){
 		return false;
 	}
 
+	ctx->start = true;
 	return true;
+}
+
+static void destroy_ips(struct rpata_ipaddr *ips)
+{
+	for(int i = 0; i < ips->nr_ips; ++i) {
+		if(ips->ips[i].addr)
+			free(ips->ips[i].addr);
+		if(ips->ips[i].name)
+			free(ips->ips[i].name);
+	}
+	free(ips->ips);
+	free(ips);
+}
+static void destroy_peers(struct rpata_peer *peers)
+{
+	struct rpata_peer *tmp;
+	while(peers){
+		tmp = peers->next;
+		free(peers->ipaddr);
+		free(peers);
+		peers = tmp;
+	}
+}
+
+void rpata_destroy(struct rpata *ctx)
+{
+	destroy_peers(ctx->peers);
+	destroy_ips(ctx->ips);
+	free(ctx->mcast);
+	pthread_mutex_destroy(&ctx->mutex);
 }

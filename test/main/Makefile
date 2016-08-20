@@ -1,4 +1,4 @@
-CFLAGS := -std=gnu11 -g -I../../include -I../../src
+CFLAGS := -std=gnu11 -g -Wall -I../../include -I../../src
 LDFLAGS := -luuid -lpthread
 all := bin
 

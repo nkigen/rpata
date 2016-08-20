@@ -5,7 +5,10 @@
 
 #include <rpata.h>
 
-#define MCAST_PORT	17000
+
+enum{
+	RPATA_MCAST_PORT=17000,
+};
 
 struct rpata_msg{
 	uint8_t magic;
@@ -35,15 +38,20 @@ struct rpata{
 	struct rpata_ipaddr *ips;	/**< IP addresses associated to the node */
 	char *mcast;			/**< Multicast address to use */
 
+	bool start;			/**< Service already started */
+	uint16_t mcast_port;		/**< Multicast Port */
 	int send_fd;
 	int recv_fd;
 
 	struct sockaddr_in send_addr;
 	struct sockaddr_in recv_addr;
 
+	struct rpata_callback *cbacks;
+
 	int nr_peers;
 	struct rpata_peer *peers;
 
+	pthread_mutex_t mutex;
 	pthread_t thread;		/**< Thread */
 };
 
