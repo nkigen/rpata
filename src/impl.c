@@ -14,7 +14,8 @@
 #include "impl.h"
 
 struct rpata_msg{
-	int y;
+	uint8_t magic;
+	char guid[37];
 };
 
 static bool ipaddr_init(struct rpata_ipaddr **ip)
@@ -173,22 +174,47 @@ static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg)
 	}
 }
 
+static void process_recv(struct rpata *ctx)
+{
+	struct rpata_msg *msg = malloc(sizeof *msg);
+	recv_mcast(ctx, msg);
+	uuid_t uuid;
+	uuid_parse(msg->guid, uuid);
+	if(!uuid_compare(uuid, ctx->guid))
+		goto err_mine;
+
+	printf("[recv] %s\n", msg->guid);
+	fflush(stdout);
+
+err_mine:
+	free(msg);
+}
+
+static void process_send(struct rpata *ctx)
+{
+	struct rpata_msg msg;
+	msg.magic = 111;
+	char uuid_str[37];      // ex. "1b4e28ba-2fa1-11d2-883f-0016d3cca427" + "\0"
+        uuid_unparse_lower(ctx->guid, uuid_str);
+	strcpy(msg.guid, uuid_str);
+	send_mcast(ctx, &msg);
+	printf("[send]\n");
+}
+
 static void *periodic(void *data)
 {
 	struct rpata *ctx = data;
-
-	char bcast[32];
-	get_bcastaddr(&ctx->ips->ips[1], bcast);
-
-	printf("bcast %s\n", bcast);
-
-#if 0
+#if 1
+	send_init(ctx);
+	recv_init(ctx);
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 
 	timespec_add_ms(&t, 2000);
 
 	while(1) {
+		process_send(ctx);
+		process_recv(ctx);
 
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
 		timespec_add_ms(&t, 2000);
@@ -253,6 +279,7 @@ bool rpata_setopt(struct rpata *ctx, int opt, char *val)
 			break;
 		case MCAST_ADDR:
 			ret = set_mcastaddr(ctx, val);
+			break;
 		default:
 			ret = false;
 	};

@@ -11,13 +11,14 @@ int main()
 		return -1;
 	}
 
-	if(!rpata_setopt(ctx, USE_IFACE, "lo"))
-		printf("not found\n");
+	if(!rpata_setopt(ctx, MCAST_ADDR, "225.0.0.37"))
+		printf("not set\n");
 	else
-		printf("found\n");
+		printf("set\n");
 
 	rpata_start(ctx);
-	sleep(3);
+	while(1)
+		sleep(3);
 
 	return 0;
 }
