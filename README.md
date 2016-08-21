@@ -1,6 +1,8 @@
 # RPATA
-RPATA (PATA is Swahili for 'find') is a minimilist, multicast-based peer discovery service library. It can be used as to complement existing networking libraries( e.g. ZMQ) by providing discovery service typically to offered by them. Also if your only choice of using DDS/RTPS is beacause of its in-built discovery service, then RPATA+ `your favourire networking library` could be an better alternative.
+RPATA (PATA is Swahili for 'find') is a minimalist, highly configurable, multicast-based peer discovery service library. It has been designed to be used as a complement to existing networking libraries such as ZMQ. No assumptions have been made on the messaging paradigm in use and it can therefore be used with well known ones such as PUBLISH-SUBSCRIBE, PUSH-PULL, ACTOR framework or any others that may benefit from having an automated peer discovery service.
+
+Also if the only reason for using DDS/RTPS is beacause of its in-built discovery service, then RPATA + `your favourire networking library` could be an better alternative.
 
 # Disclaimer!!
 
-RPATA is still under heavy development and things are bound to change.
+RPATA is still under heavy development and things are bound to change. Contributions and pull requests are welcome!
