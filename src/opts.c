@@ -16,8 +16,7 @@ static bool add_ni(struct rpata *ctx, char *ni)
 		return false;
 
 	bool ret = false;
-	int i;
-	for(i = 0; i < ips->nr_ips; ++i){
+	for(size_t i = 0; i < ips->nr_ips; ++i){
 		if(ips->ips[i].addr && 
 				ni_cmp(ni, ips->ips[i].name)){
 			ctx->ni = strdup(ni);

@@ -195,7 +195,7 @@ static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 
 static char *get_ipaddr(struct rpata *ctx)
 {
-	for(int i = 0;i < ctx->ips->nr_ips; ++i)
+	for(size_t i = 0;i < ctx->ips->nr_ips; ++i)
 		if(0 == strcmp(ctx->ips->ips[i].name, ctx->ni))
 			return ctx->ips->ips[i].addr;
 
@@ -318,7 +318,7 @@ bool rpata_start(struct rpata *ctx)
 
 static void destroy_ips(struct rpata_ipaddr *ips)
 {
-	for(int i = 0; i < ips->nr_ips; ++i) {
+	for(size_t i = 0; i < ips->nr_ips; ++i) {
 		if(ips->ips[i].addr)
 			free(ips->ips[i].addr);
 		if(ips->ips[i].name)
