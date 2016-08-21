@@ -19,9 +19,9 @@ int main()
 		return -1;
 	}
 
-	if(rpata_setopt(ctx, USE_MCAST_ADDR, "225.0.0.37") &&
-			rpata_setopt(ctx, USE_MCAST_PORT, "18000") &&
-			rpata_setopt(ctx, USE_IFACE, "wlo1")){
+	if(rpata_setopt(ctx, WITH_MCAST_ADDR, "225.0.0.37") &&
+			rpata_setopt(ctx, WITH_MCAST_PORT, "18000") &&
+			rpata_setopt(ctx, WITH_NI, "wlo1")){
 		printf("all set\n");
 	}
 	else{

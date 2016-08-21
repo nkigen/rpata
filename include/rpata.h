@@ -6,18 +6,28 @@
 extern "C" {
 #endif
 
-enum{
-	USE_IFACE=0,
-	USE_MCAST_ADDR=1,
-	USE_MCAST_PORT=2,
-};
-
+/*
+ * Foward declaration
+ */
 struct rpata;
 struct rpata_peer;
-struct rpata_callback{
-	void(*peer_joined)(char*);
+
+/*
+ * RPATA configuration options used with rpata_setopt(...)
+ */
+enum{
+	WITH_NI=0,
+	WITH_MCAST_ADDR=1,
+	WITH_MCAST_PORT=2,
+	WITH_PERIOD=3,
 };
 
+/*
+ * user defined callback functions 
+ */
+struct rpata_callback{
+	void(*peer_joined)(char*);	/**< New Peer callback function */
+};
 
 struct rpata *rpata_init();
 bool rpata_setopt(struct rpata *ctx, int opt, char *val);
@@ -30,4 +40,5 @@ void rpata_destroy(struct rpata *ctx);
 #ifdef __cplusplus
 }
 #endif
+
 #endif /* RPATA_H */

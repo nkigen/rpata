@@ -5,13 +5,15 @@
 #include <inttypes.h>
 
 #include <sys/sysinfo.h>
-#include <sys/types.h>
 #include <arpa/inet.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <ifaddrs.h>
 
 #include <rpata.h>
+
+#include "utils.h"
 #include "impl.h"
 
 static bool ipaddr_init(struct rpata_ipaddr **ip)
@@ -36,7 +38,7 @@ static bool ipaddr_init(struct rpata_ipaddr **ip)
 	return true;
 }
 
-static bool iface_init(struct rpata *ctx)
+static bool ni_init(struct rpata *ctx)
 {
 	ctx->ips = malloc(sizeof *ctx->ips);
 	if(!ctx->ips)
@@ -82,15 +84,6 @@ static void guid_init(uuid_t *guid)
 	uuid_generate_time_safe(*guid);
 }
 
-static void timespec_add_ms(struct timespec *t, uint16_t ms)
-{
-	t->tv_sec += ms / 1000;
-	t->tv_nsec += (ms % 1000) * 1000000;
-	if (t->tv_nsec > 1000000000) {
-		t->tv_nsec -= 1000000000;
-		t->tv_sec += 1;
-	}
-}
 
 static bool send_init(struct rpata *ctx)
 {
@@ -203,7 +196,7 @@ static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 static char *get_ipaddr(struct rpata *ctx)
 {
 	for(int i = 0;i < ctx->ips->nr_ips; ++i)
-		if(0 == strcmp(ctx->ips->ips[i].name, ctx->iface))
+		if(0 == strcmp(ctx->ips->ips[i].name, ctx->ni))
 			return ctx->ips->ips[i].addr;
 
 	return ctx->ips->ips[0].addr;
@@ -213,6 +206,7 @@ void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
 {
 	strcpy(ip, peer[pos].ipaddr);
 }
+
 void rpata_getpeers(struct rpata *ctx, struct rpata_peer **peers, int *num)
 {
 	*peers = calloc(ctx->nr_peers, sizeof *peers);
@@ -269,12 +263,12 @@ static void *periodic(void *data)
 
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
-	timespec_add_ms(&t, 1000);
+	rpata_timespec_add_ms(&t, ctx->period);
 	while(1) {
 		process_send(ctx);
 		process_recv(ctx);
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
-		timespec_add_ms(&t, 1000);
+		rpata_timespec_add_ms(&t, ctx->period);
 	}
 
 	return NULL;
@@ -285,6 +279,7 @@ static void rpata_defaults(struct rpata *ctx)
 	ctx->mcast = NULL;
 	ctx->peers = NULL;
 	ctx->nr_peers = 0;
+	ctx->period = RPATA_PERIOD;
 	ctx->mcast_port = RPATA_MCAST_PORT;
 	ctx->start = false;
 
@@ -299,75 +294,12 @@ struct rpata *rpata_init()
 		return NULL;
 	
 	rpata_defaults(ctx);
-	iface_init(ctx);
+	ni_init(ctx);
 	guid_init(&ctx->guid);	
 
 	return ctx;
 }
 
-static bool ifacecmp(const char *i1, const char *i2)
-{
-	return 0 == strcmp(i1, i2);
-}
-
-static bool add_iface(struct rpata *ctx, char *iface)
-{
-	struct rpata_ipaddr *ips = ctx->ips;
-	if(!ips)
-		return false;
-
-	bool ret = false;
-	int i;
-	for(i = 0; i < ips->nr_ips; ++i){
-		if(ips->ips[i].addr && 
-				ifacecmp(iface, ips->ips[i].name)){
-			ctx->iface = strdup(iface);
-			ret = true;
-			break;
-		}
-	}
-
-	return ret;
-}
-
-static bool set_mcastaddr(struct rpata *ctx, char *addr)
-{
-	if(ctx->mcast)
-		free(ctx->mcast);
-
-	ctx->mcast = strdup(addr);
-
-	return true;
-}
-
-static bool set_mcastport(struct rpata *ctx, char *port)
-{
-	ctx->mcast_port = atoi(port);
-	return true;
-}
-
-bool rpata_setopt(struct rpata *ctx, int opt, char *val)
-{
-	if(ctx->start)
-		return false;
-
-	bool ret = false;
-	switch(opt){
-		case USE_IFACE:
-			ret = add_iface(ctx, val);
-			break;
-		case USE_MCAST_ADDR:
-			ret = set_mcastaddr(ctx, val);
-			break;
-		case USE_MCAST_PORT:
-			ret = set_mcastport(ctx, val);
-			break;
-		default:
-			ret = false;
-	};
-
-	return ret;
-}
 
 void rpata_setcallback(struct rpata *ctx, struct rpata_callback *cback)
 {
@@ -395,6 +327,7 @@ static void destroy_ips(struct rpata_ipaddr *ips)
 	free(ips->ips);
 	free(ips);
 }
+
 static void destroy_peers(struct rpata_peer *peers)
 {
 	struct rpata_peer *tmp;

@@ -2,13 +2,15 @@
 #define RPATA_IMPL_H
 #include <pthread.h>
 #include <uuid/uuid.h>
-
+#include <inttypes.h>
+#include <netinet/in.h>
 #include <rpata.h>
 
 static const int const rpata_magic = 111;
 
 enum{
 	RPATA_MCAST_PORT=17000,
+	RPATA_PERIOD=1000,
 };
 
 struct rpata_msg{
@@ -38,7 +40,7 @@ struct rpata{
 	uuid_t guid;			/**< Globally unique identifier */
 	struct rpata_ipaddr *ips;	/**< IP addresses associated to the node */
 	char *mcast;			/**< Multicast address to use */
-	char *iface;			/**< Network interface to use */
+	char *ni;			/**< Network interface to use */
 
 	bool start;			/**< Service already started */
 	uint16_t mcast_port;		/**< Multicast Port */
@@ -49,6 +51,8 @@ struct rpata{
 	struct sockaddr_in recv_addr;
 
 	struct rpata_callback *cbacks;
+
+	int period;
 
 	int nr_peers;
 	struct rpata_peer *peers;
