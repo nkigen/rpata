@@ -36,7 +36,7 @@ $(DIR_LIBRARY)/%.so: $(OBJS)
 	$(CC) $< -c $(CFLAGS) -o $@
 
 .PHONY: demo
-demo:
+demo: $(LIBS)
 	$(MAKE) -C demo/
 
 .PHONY: clean

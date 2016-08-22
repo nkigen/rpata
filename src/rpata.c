@@ -300,6 +300,15 @@ struct rpata *rpata_init()
 	return ctx;
 }
 
+int rpata_getsize(struct rpata *ctx)
+{
+	int size;
+	pthread_mutex_lock(&ctx->mutex);
+	size = ctx->nr_peers;
+	pthread_mutex_unlock(&ctx->mutex);
+
+	return size;
+}
 
 void rpata_setcallback(struct rpata *ctx, struct rpata_callback *cback)
 {

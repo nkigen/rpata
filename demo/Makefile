@@ -7,8 +7,8 @@ all := bin
 
 .PHONY: bin
 bin:
-	$(CC) $(CFLAGS) $(SRCS) $(LDFLAGS) -o test.bin
+	$(CC) $(CFLAGS) $(SRCS) $(LDFLAGS) -o demo.bin
 
 .PHONY: clean
 clean:
-	$(RM) test.bin
+	$(RM) demo.bin
