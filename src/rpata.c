@@ -26,6 +26,8 @@ static bool ipaddr_init(struct rpata_ipaddr **ip)
 			  ++(*ip)->nr_ips;
 	}
 
+	freeifaddrs(addrs);
+
 	if(!(*ip)->nr_ips)
 		return false;
 
@@ -114,12 +116,13 @@ static bool recv_init(struct rpata *ctx)
 		return false;
 	}
 
-	memset(&ctx->recv_addr, 0, sizeof ctx->recv_addr);
-	ctx->recv_addr.sin_family = AF_INET;
-	ctx->recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	ctx->recv_addr.sin_port = htons(ctx->mcast_port);
+	struct sockaddr_in recv_addr;
+	memset(&recv_addr, 0, sizeof recv_addr);
+	recv_addr.sin_family = AF_INET;
+	recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	recv_addr.sin_port = htons(ctx->mcast_port);
 
-	if (bind(ctx->recv_fd, (struct sockaddr *)&ctx->recv_addr, sizeof ctx->recv_addr) < 0) {
+	if (bind(ctx->recv_fd, (struct sockaddr *)&recv_addr, sizeof recv_addr) < 0) {
 		perror("bind");
 		return false;
 	}
@@ -141,14 +144,16 @@ static void send_mcast(struct rpata *ctx, struct rpata_msg *msg)
 	}
 }
 
-static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg)
+static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg, char *recvip)
 {
 	int nbytes;
-	socklen_t addrlen = sizeof ctx->recv_addr;
-
-	if ((nbytes = recvfrom(ctx->recv_fd, msg, sizeof *msg, 0, (struct sockaddr *)&ctx->recv_addr, &addrlen)) < 0) {
+	struct sockaddr_in recv_addr;
+	socklen_t len = sizeof recv_addr;
+	if ((nbytes = recvfrom(ctx->recv_fd, msg, sizeof *msg, 0, (struct sockaddr *)&recv_addr, &len)) < 0) {
 		perror("recvfrom");
+		return;
 	}
+	getnameinfo((struct sockaddr *)&recv_addr, sizeof(struct sockaddr_in), recvip, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
 }
 
 static bool add_peer(struct rpata *ctx, char *uuid, char *ipaddr)
@@ -192,14 +197,17 @@ static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 	return true;
 }
 
+#if 0
 static char *get_ipaddr(struct rpata *ctx)
 {
 	for(size_t i = 0;i < ctx->ips->nr_ips; ++i)
 		if(0 == strcmp(ctx->ips->ips[i].name, ctx->ni))
 			return ctx->ips->ips[i].addr;
 
+	/* Default behaviour: return the loopback interface */
 	return ctx->ips->ips[0].addr;
 }
+#endif
 
 void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
 {
@@ -229,24 +237,24 @@ static void process_send(struct rpata *ctx)
 	char uuid_str[37];
         uuid_unparse_lower(ctx->guid, uuid_str);
 	strcpy(msg.guid, uuid_str);
-	strcpy(msg.ip, get_ipaddr(ctx));
 	send_mcast(ctx, &msg);
 }
 
 static void process_recv(struct rpata *ctx)
 {
 	struct rpata_msg *msg = malloc(sizeof *msg);
-	recv_mcast(ctx, msg);
+	char recvip[16];
+	recv_mcast(ctx, msg, recvip);
 	uuid_t uuid;
 	uuid_parse(msg->guid, uuid);
 	while(!uuid_compare(uuid, ctx->guid)){
-		recv_mcast(ctx, msg);
+		recv_mcast(ctx, msg, recvip);
 		uuid_parse(msg->guid, uuid);
 	}
 
 	if(is_peer_new(ctx, uuid)){
 		pthread_mutex_lock(&ctx->mutex);
-		add_peer(ctx, msg->guid, msg->ip);
+		add_peer(ctx, msg->guid, recvip);
 		pthread_mutex_unlock(&ctx->mutex);
 	}
 
