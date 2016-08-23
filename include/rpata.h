@@ -16,10 +16,10 @@ struct rpata_peer;
  * RPATA configuration options used with rpata_setopt(...)
  */
 enum{
-	WITH_NI=0,
-	WITH_MCAST_ADDR=1,
-	WITH_MCAST_PORT=2,
-	WITH_PERIOD=3,
+	WITH_NI,
+	WITH_MCAST_ADDR,
+	WITH_MCAST_PORT,
+	WITH_PERIOD,
 };
 
 /*
