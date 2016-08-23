@@ -28,6 +28,7 @@ enum{
  */
 struct rpata_callback{
 	void(*peer_joined)(char*);	/**< New Peer callback function */
+	void(*peer_left)(char*);	/**< AWOL Peer callback function */
 };
 
 struct rpata *rpata_init();

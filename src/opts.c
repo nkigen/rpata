@@ -50,6 +50,12 @@ static bool set_mcastperiod(struct rpata *ctx, char *period)
 	return true;
 }
 
+static bool set_timeout(struct rpata *ctx, char *to)
+{
+	ctx->timeout = atoi(to);
+	return true;
+}
+
 bool rpata_setopt(struct rpata *ctx, int opt, char *val)
 {
 	if(ctx->start)
@@ -68,6 +74,9 @@ bool rpata_setopt(struct rpata *ctx, int opt, char *val)
 			break;
 		case WITH_PERIOD:
 			ret = set_mcastperiod(ctx, val);
+			break;
+		case WITH_TIMEOUT:
+			ret = set_timeout(ctx, val);
 			break;
 		default:
 			ret = false;

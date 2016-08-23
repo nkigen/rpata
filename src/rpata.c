@@ -269,6 +269,8 @@ static void update_peers(struct rpata *ctx)
 		diff = rpata_time_diffms(t, head->lmsg);
 		if(diff > (double)ctx->timeout){
 			head->state = RPATA_PEER_AWOL;
+			if(ctx->cbacks && ctx->cbacks->peer_left)
+				ctx->cbacks->peer_left(head->ipaddr);
 		}
 		head = head->next;
 	}

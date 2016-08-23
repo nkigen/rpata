@@ -12,7 +12,12 @@ void new_peer(char *ip)
 	printf("new peer %s has joined\n", ip);
 }
 
-struct rpata_callback cback = {.peer_joined = new_peer};
+void peer_left(char *ip)
+{
+	printf("peer %s has gone AWOL\n", ip);
+}
+
+struct rpata_callback cback = {.peer_joined = new_peer, .peer_left = peer_left};
 
 int main(int argc, char *argv[])
 {
