@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <inttypes.h>
+#include <time.h>
 
 #include <sys/sysinfo.h>
 #include <arpa/inet.h>
@@ -258,6 +259,21 @@ static void process_recv(struct rpata *ctx)
 	free(msg);
 }
 
+static void update_peers(struct rpata *ctx)
+{
+	struct rpata_peer *head = ctx->peers;
+	double diff;
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	while(head){
+		diff = rpata_time_diffms(t, head->lmsg);
+		if(diff > (double)ctx->timeout){
+			head->state = RPATA_PEER_AWOL;
+		}
+		head = head->next;
+	}
+}
+
 static void *periodic(void *data)
 {
 	struct rpata *ctx = data;
@@ -271,6 +287,7 @@ static void *periodic(void *data)
 	while(1) {
 		process_send(ctx);
 		process_recv(ctx);
+		update_peers(ctx);
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
 		rpata_timespec_add_ms(&t, ctx->period);
 	}
