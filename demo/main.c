@@ -3,6 +3,10 @@
 #include <rpata.h>
 #include <unistd.h>
 
+#define MCAST_IP "225.0.0.37"
+#define MCAST_PORT "18000" 
+#define MCAST_NI "wlo1"
+
 void new_peer(char *ip)
 {
 	printf("new peer %s has joined\n", ip);
@@ -10,7 +14,7 @@ void new_peer(char *ip)
 
 struct rpata_callback cback = {.peer_joined = new_peer};
 
-int main()
+int main(int argc, char *argv[])
 {
 	struct rpata *ctx = rpata_init();
 
@@ -19,9 +23,9 @@ int main()
 		return -1;
 	}
 
-	if(rpata_setopt(ctx, WITH_MCAST_ADDR, "225.0.0.37") &&
-			rpata_setopt(ctx, WITH_MCAST_PORT, "18000") &&
-			rpata_setopt(ctx, WITH_NI, "wlo1")){
+	if(rpata_setopt(ctx, WITH_MCAST_ADDR, MCAST_IP) &&
+			rpata_setopt(ctx, WITH_MCAST_PORT, MCAST_PORT) &&
+			rpata_setopt(ctx, WITH_NI, MCAST_NI)){
 		printf("all set\n");
 	}
 	else{
