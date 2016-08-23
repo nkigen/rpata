@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <inttypes.h>
+#include <time.h>
 
 #include <sys/sysinfo.h>
 #include <arpa/inet.h>
@@ -18,14 +19,15 @@
 
 static bool ipaddr_init(struct rpata_ipaddr **ip)
 {
-	FILE *fp = popen("ls -A /sys/class/net", "r");
-	if(!fp)
-		return false;
+	struct ifaddrs *addrs,*tmp;
+	getifaddrs(&addrs);
+	for(tmp = addrs, (*ip)->nr_ips = 0; tmp ; tmp = tmp->ifa_next)
+	{
+		if (tmp->ifa_addr && tmp->ifa_addr->sa_family == AF_INET)
+			  ++(*ip)->nr_ips;
+	}
 
-	char out[10];
-	(*ip)->nr_ips = 0;
-	while(fgets(out, 9, fp))
-		++(*ip)->nr_ips;
+	freeifaddrs(addrs);
 
 	if(!(*ip)->nr_ips)
 		return false;
@@ -115,12 +117,13 @@ static bool recv_init(struct rpata *ctx)
 		return false;
 	}
 
-	memset(&ctx->recv_addr, 0, sizeof ctx->recv_addr);
-	ctx->recv_addr.sin_family = AF_INET;
-	ctx->recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	ctx->recv_addr.sin_port = htons(ctx->mcast_port);
+	struct sockaddr_in recv_addr;
+	memset(&recv_addr, 0, sizeof recv_addr);
+	recv_addr.sin_family = AF_INET;
+	recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	recv_addr.sin_port = htons(ctx->mcast_port);
 
-	if (bind(ctx->recv_fd, (struct sockaddr *)&ctx->recv_addr, sizeof ctx->recv_addr) < 0) {
+	if (bind(ctx->recv_fd, (struct sockaddr *)&recv_addr, sizeof recv_addr) < 0) {
 		perror("bind");
 		return false;
 	}
@@ -142,14 +145,16 @@ static void send_mcast(struct rpata *ctx, struct rpata_msg *msg)
 	}
 }
 
-static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg)
+static void recv_mcast(struct rpata *ctx, struct rpata_msg *msg, char *recvip)
 {
 	int nbytes;
-	socklen_t addrlen = sizeof ctx->recv_addr;
-
-	if ((nbytes = recvfrom(ctx->recv_fd, msg, sizeof *msg, 0, (struct sockaddr *)&ctx->recv_addr, &addrlen)) < 0) {
+	struct sockaddr_in recv_addr;
+	socklen_t len = sizeof recv_addr;
+	if ((nbytes = recvfrom(ctx->recv_fd, msg, sizeof *msg, 0, (struct sockaddr *)&recv_addr, &len)) < 0) {
 		perror("recvfrom");
+		return;
 	}
+	getnameinfo((struct sockaddr *)&recv_addr, sizeof(struct sockaddr_in), recvip, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
 }
 
 static bool add_peer(struct rpata *ctx, char *uuid, char *ipaddr)
@@ -161,7 +166,9 @@ static bool add_peer(struct rpata *ctx, char *uuid, char *ipaddr)
 		return false;
 
 	uuid_parse(uuid, peer->guid);
-	peer->ipaddr = ipaddr;
+	peer->ipaddr = strdup(ipaddr);
+	clock_gettime(CLOCK_MONOTONIC, &peer->lmsg);
+	peer->state = RPATA_PEER_ALIVE;
 	peer->next = NULL;
 
 	if(!head){
@@ -185,21 +192,16 @@ static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 {
 	struct rpata_peer *head = ctx->peers;
 	while(head){
-		if(0 == uuid_compare(uuid, head->guid))
+		if(0 == uuid_compare(uuid, head->guid)){
+			/**FIXME: Move updating time to another function*/
+			clock_gettime(CLOCK_MONOTONIC, &head->lmsg);
+			head->state = RPATA_PEER_ALIVE;
 			return false;
+		}
 		head = head->next;
 	}
 
 	return true;
-}
-
-static char *get_ipaddr(struct rpata *ctx)
-{
-	for(size_t i = 0;i < ctx->ips->nr_ips; ++i)
-		if(0 == strcmp(ctx->ips->ips[i].name, ctx->ni))
-			return ctx->ips->ips[i].addr;
-
-	return ctx->ips->ips[0].addr;
 }
 
 void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
@@ -209,18 +211,20 @@ void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
 
 void rpata_getpeers(struct rpata *ctx, struct rpata_peer **peers, int *num)
 {
-	*peers = calloc(ctx->nr_peers, sizeof *peers);
+	*peers = calloc(ctx->nr_peers, sizeof **peers);
 	if(!*peers)
 		return;
 
-	*num = ctx->nr_peers;
-	memset(*peers, 0, *num * sizeof *peers);
+	*num = 0;
+	memset(*peers, 0, ctx->nr_peers * sizeof **peers);
 	struct rpata_peer *head = ctx->peers;
-	for(int i = 0; i < *num; ++i, head = head->next){
-		(*peers)[i].ipaddr = strdup(head->ipaddr);
-		/**FIXME: Add more fields */
+	for(int i = 0; i < ctx->nr_peers; ++i, head = head->next){
+		if(RPATA_PEER_ALIVE == head->state){
+			(*peers)[i].ipaddr = strdup(head->ipaddr);
+			++(*num);
+			/**FIXME: Add more fields */
+		}
 	}
-
 }
 
 static void process_send(struct rpata *ctx)
@@ -230,28 +234,44 @@ static void process_send(struct rpata *ctx)
 	char uuid_str[37];
         uuid_unparse_lower(ctx->guid, uuid_str);
 	strcpy(msg.guid, uuid_str);
-	strcpy(msg.ip, get_ipaddr(ctx));
 	send_mcast(ctx, &msg);
 }
 
 static void process_recv(struct rpata *ctx)
 {
 	struct rpata_msg *msg = malloc(sizeof *msg);
-	recv_mcast(ctx, msg);
+	char recvip[16];
+	recv_mcast(ctx, msg, recvip);
 	uuid_t uuid;
 	uuid_parse(msg->guid, uuid);
 	while(!uuid_compare(uuid, ctx->guid)){
-		recv_mcast(ctx, msg);
+		recv_mcast(ctx, msg, recvip);
 		uuid_parse(msg->guid, uuid);
+
+		if(is_peer_new(ctx, uuid)){
+			pthread_mutex_lock(&ctx->mutex);
+			add_peer(ctx, msg->guid, recvip);
+			pthread_mutex_unlock(&ctx->mutex);
+		}
 	}
 
-	if(is_peer_new(ctx, uuid)){
-		pthread_mutex_lock(&ctx->mutex);
-		add_peer(ctx, msg->guid, msg->ip);
-		pthread_mutex_unlock(&ctx->mutex);
-	}
 
 	free(msg);
+}
+
+static void update_peers(struct rpata *ctx)
+{
+	struct rpata_peer *head = ctx->peers;
+	double diff;
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	while(head){
+		diff = rpata_time_diffms(t, head->lmsg);
+		if(diff > (double)ctx->timeout){
+			head->state = RPATA_PEER_AWOL;
+		}
+		head = head->next;
+	}
 }
 
 static void *periodic(void *data)
@@ -267,6 +287,7 @@ static void *periodic(void *data)
 	while(1) {
 		process_send(ctx);
 		process_recv(ctx);
+		update_peers(ctx);
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
 		rpata_timespec_add_ms(&t, ctx->period);
 	}
@@ -280,6 +301,7 @@ static void rpata_defaults(struct rpata *ctx)
 	ctx->peers = NULL;
 	ctx->nr_peers = 0;
 	ctx->period = RPATA_PERIOD;
+	ctx->timeout = RPATA_TIMEOUT;
 	ctx->mcast_port = RPATA_MCAST_PORT;
 	ctx->start = false;
 

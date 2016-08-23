@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
 			printf("ip %s\n", ip);
 		}
 		free(peers);
-		sleep(10);
+		sleep(5);
 	}
 
 	return 0;
