@@ -18,14 +18,13 @@
 
 static bool ipaddr_init(struct rpata_ipaddr **ip)
 {
-	FILE *fp = popen("ls -A /sys/class/net", "r");
-	if(!fp)
-		return false;
-
-	char out[10];
-	(*ip)->nr_ips = 0;
-	while(fgets(out, 9, fp))
-		++(*ip)->nr_ips;
+	struct ifaddrs *addrs,*tmp;
+	getifaddrs(&addrs);
+	for(tmp = addrs, (*ip)->nr_ips = 0; tmp ; tmp = tmp->ifa_next)
+	{
+		if (tmp->ifa_addr && tmp->ifa_addr->sa_family == AF_INET)
+			  ++(*ip)->nr_ips;
+	}
 
 	if(!(*ip)->nr_ips)
 		return false;
