@@ -8,15 +8,18 @@
 
 static const int const rpata_magic = 111;
 
+/*
+ * Defaults
+ */
 enum{
-	RPATA_MCAST_PORT=17000,
-	RPATA_PERIOD=1000,
+	RPATA_MCAST_PORT = 17000,
+	RPATA_PERIOD = 1000,
+	RPATA_TIMEOUT = 5000,
 };
 
 struct rpata_msg{
 	uint8_t magic;
 	char guid[37];
-	char ip[16];
 };
 
 struct rpata_ipaddr{
@@ -27,9 +30,15 @@ struct rpata_ipaddr{
 	} *ips;
 };
 
+enum rpata_peer_state{
+	RPATA_PEER_ALIVE,
+	RPATA_PEER_AWOL,
+};
 struct rpata_peer{
 	uuid_t guid;
 	char *ipaddr;
+	enum rpata_peer_state state;
+	struct timespec lmsg;
 	struct rpata_peer *next;
 };
 
@@ -48,11 +57,12 @@ struct rpata{
 	int recv_fd;
 
 	struct sockaddr_in send_addr;
-	struct sockaddr_in recv_addr;
+//	struct sockaddr_in recv_addr;
 
 	struct rpata_callback *cbacks;
 
 	int period;
+	int timeout;
 
 	int nr_peers;
 	struct rpata_peer *peers;

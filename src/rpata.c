@@ -165,7 +165,9 @@ static bool add_peer(struct rpata *ctx, char *uuid, char *ipaddr)
 		return false;
 
 	uuid_parse(uuid, peer->guid);
-	peer->ipaddr = ipaddr;
+	peer->ipaddr = strdup(ipaddr);
+	clock_gettime(CLOCK_MONOTONIC, &peer->lmsg);
+	peer->state = RPATA_PEER_ALIVE;
 	peer->next = NULL;
 
 	if(!head){
@@ -189,25 +191,17 @@ static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 {
 	struct rpata_peer *head = ctx->peers;
 	while(head){
-		if(0 == uuid_compare(uuid, head->guid))
+		if(0 == uuid_compare(uuid, head->guid)){
+			/**FIXME: Move updating time to another function*/
+			clock_gettime(CLOCK_MONOTONIC, &head->lmsg);
+			head->state = RPATA_PEER_ALIVE;
 			return false;
+		}
 		head = head->next;
 	}
 
 	return true;
 }
-
-#if 0
-static char *get_ipaddr(struct rpata *ctx)
-{
-	for(size_t i = 0;i < ctx->ips->nr_ips; ++i)
-		if(0 == strcmp(ctx->ips->ips[i].name, ctx->ni))
-			return ctx->ips->ips[i].addr;
-
-	/* Default behaviour: return the loopback interface */
-	return ctx->ips->ips[0].addr;
-}
-#endif
 
 void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
 {
@@ -216,18 +210,20 @@ void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
 
 void rpata_getpeers(struct rpata *ctx, struct rpata_peer **peers, int *num)
 {
-	*peers = calloc(ctx->nr_peers, sizeof *peers);
+	*peers = calloc(ctx->nr_peers, sizeof **peers);
 	if(!*peers)
 		return;
 
-	*num = ctx->nr_peers;
-	memset(*peers, 0, *num * sizeof *peers);
+	*num = 0;
+	memset(*peers, 0, ctx->nr_peers * sizeof **peers);
 	struct rpata_peer *head = ctx->peers;
-	for(int i = 0; i < *num; ++i, head = head->next){
-		(*peers)[i].ipaddr = strdup(head->ipaddr);
-		/**FIXME: Add more fields */
+	for(int i = 0; i < ctx->nr_peers; ++i, head = head->next){
+		if(RPATA_PEER_ALIVE == head->state){
+			(*peers)[i].ipaddr = strdup(head->ipaddr);
+			++(*num);
+			/**FIXME: Add more fields */
+		}
 	}
-
 }
 
 static void process_send(struct rpata *ctx)
@@ -250,13 +246,14 @@ static void process_recv(struct rpata *ctx)
 	while(!uuid_compare(uuid, ctx->guid)){
 		recv_mcast(ctx, msg, recvip);
 		uuid_parse(msg->guid, uuid);
+
+		if(is_peer_new(ctx, uuid)){
+			pthread_mutex_lock(&ctx->mutex);
+			add_peer(ctx, msg->guid, recvip);
+			pthread_mutex_unlock(&ctx->mutex);
+		}
 	}
 
-	if(is_peer_new(ctx, uuid)){
-		pthread_mutex_lock(&ctx->mutex);
-		add_peer(ctx, msg->guid, recvip);
-		pthread_mutex_unlock(&ctx->mutex);
-	}
 
 	free(msg);
 }
@@ -287,6 +284,7 @@ static void rpata_defaults(struct rpata *ctx)
 	ctx->peers = NULL;
 	ctx->nr_peers = 0;
 	ctx->period = RPATA_PERIOD;
+	ctx->timeout = RPATA_TIMEOUT;
 	ctx->mcast_port = RPATA_MCAST_PORT;
 	ctx->start = false;
 
