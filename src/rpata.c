@@ -190,18 +190,22 @@ ret_true:
 
 static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 {
+	bool ret = true;
+	pthread_mutex_lock(&ctx->mutex);
 	struct rpata_peer *head = ctx->peers;
 	while(head){
 		if(0 == uuid_compare(uuid, head->guid)){
 			/**FIXME: Move updating time to another function*/
 			clock_gettime(CLOCK_MONOTONIC, &head->lmsg);
 			head->state = RPATA_PEER_ALIVE;
-			return false;
+			ret = false;
+			break;
 		}
 		head = head->next;
 	}
 
-	return true;
+	pthread_mutex_unlock(&ctx->mutex);
+	return ret;
 }
 
 void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
@@ -282,11 +286,12 @@ static void process_recv(struct rpata *ctx)
 
 static void update_peers(struct rpata *ctx)
 {
-	pthread_mutex_lock(&ctx->mutex);
-	struct rpata_peer *head = ctx->peers;
 	double diff;
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
+
+	pthread_mutex_lock(&ctx->mutex);
+	struct rpata_peer *head = ctx->peers;
 	while(head){
 		diff = rpata_time_diffms(t, head->lmsg);
 		if(diff > (double)ctx->timeout){
