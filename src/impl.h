@@ -57,7 +57,6 @@ struct rpata{
 	int recv_fd;
 
 	struct sockaddr_in send_addr;
-//	struct sockaddr_in recv_addr;
 
 	struct rpata_callback *cbacks;
 

@@ -227,6 +227,15 @@ void rpata_getpeers(struct rpata *ctx, struct rpata_peer **peers, int *num)
 	}
 }
 
+void rpata_freepeers(struct rpata_peer *peers, int num)
+{
+	struct rpata_peer *head = peers;
+	for(int i = 0; i < num; ++i, head = head->next){
+		free(head->ipaddr);
+	}
+	free(peers);
+}
+
 static void process_send(struct rpata *ctx)
 {
 	struct rpata_msg msg;

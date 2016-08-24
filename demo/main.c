@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
 			rpata_peer_getipaddr(peers, ip, i);
 			printf("ip %s\n", ip);
 		}
-		free(peers);
+		rpata_freepeers(peers, num);
 		sleep(5);
 	}
 
