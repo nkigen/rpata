@@ -79,7 +79,7 @@ static bool ni_init(struct rpata *ctx)
 
 	freeifaddrs(ifaddr);
 	return true; 
-}	
+}
 
 static void guid_init(uuid_t *guid)
 {
@@ -190,41 +190,66 @@ ret_true:
 
 static bool is_peer_new(struct rpata *ctx, uuid_t uuid)
 {
+	bool ret = true;
+	pthread_mutex_lock(&ctx->mutex);
 	struct rpata_peer *head = ctx->peers;
 	while(head){
 		if(0 == uuid_compare(uuid, head->guid)){
 			/**FIXME: Move updating time to another function*/
 			clock_gettime(CLOCK_MONOTONIC, &head->lmsg);
 			head->state = RPATA_PEER_ALIVE;
-			return false;
+			ret = false;
+			break;
 		}
 		head = head->next;
 	}
 
-	return true;
+	pthread_mutex_unlock(&ctx->mutex);
+	return ret;
 }
 
 void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos)
 {
-	strcpy(ip, peer[pos].ipaddr);
+	strcpy(ip, (peer + pos)->ipaddr);
 }
 
-void rpata_getpeers(struct rpata *ctx, struct rpata_peer **peers, int *num)
+char **rpata_getpeers(struct rpata *ctx, int *num)
 {
-	*peers = calloc(ctx->nr_peers, sizeof **peers);
-	if(!*peers)
-		return;
+	pthread_mutex_lock(&ctx->mutex);
+	char **peers = NULL;
+	if(!ctx->nr_peers)
+		goto ret_exit;
 
+	peers = calloc(ctx->nr_peers, sizeof *peers);
+	if(!peers)
+		goto ret_exit;
+
+	memset(peers, 0, ctx->nr_peers * sizeof *peers);
 	*num = 0;
-	memset(*peers, 0, ctx->nr_peers * sizeof **peers);
 	struct rpata_peer *head = ctx->peers;
 	for(int i = 0; i < ctx->nr_peers; ++i, head = head->next){
 		if(RPATA_PEER_ALIVE == head->state){
-			(*peers)[i].ipaddr = strdup(head->ipaddr);
+			peers[i] = strdup(head->ipaddr);
 			++(*num);
-			/**FIXME: Add more fields */
+			/*XXX: Add more fields when needed*/
 		}
 	}
+
+ret_exit:
+	pthread_mutex_unlock(&ctx->mutex);
+	return peers;
+}
+
+void rpata_freepeers(struct rpata *ctx, char **peers, int num)
+{
+	(void)ctx;
+	if(!peers)
+		return;
+
+	for(int i = 0; i < num; ++i){
+		free(peers[i]);
+	}
+	free(peers);
 }
 
 static void process_send(struct rpata *ctx)
@@ -261,17 +286,23 @@ static void process_recv(struct rpata *ctx)
 
 static void update_peers(struct rpata *ctx)
 {
-	struct rpata_peer *head = ctx->peers;
 	double diff;
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
+
+	pthread_mutex_lock(&ctx->mutex);
+	struct rpata_peer *head = ctx->peers;
 	while(head){
 		diff = rpata_time_diffms(t, head->lmsg);
 		if(diff > (double)ctx->timeout){
 			head->state = RPATA_PEER_AWOL;
+			--ctx->nr_peers;
+			if(ctx->cbacks && ctx->cbacks->peer_left)
+				ctx->cbacks->peer_left(head->ipaddr);
 		}
 		head = head->next;
 	}
+	pthread_mutex_unlock(&ctx->mutex);
 }
 
 static void *periodic(void *data)
@@ -304,7 +335,6 @@ static void rpata_defaults(struct rpata *ctx)
 	ctx->timeout = RPATA_TIMEOUT;
 	ctx->mcast_port = RPATA_MCAST_PORT;
 	ctx->start = false;
-
 	ctx->cbacks = NULL;
 	pthread_mutex_init(&ctx->mutex, NULL);
 }

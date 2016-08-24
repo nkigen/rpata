@@ -34,6 +34,7 @@ enum rpata_peer_state{
 	RPATA_PEER_ALIVE,
 	RPATA_PEER_AWOL,
 };
+
 struct rpata_peer{
 	uuid_t guid;
 	char *ipaddr;
@@ -57,7 +58,6 @@ struct rpata{
 	int recv_fd;
 
 	struct sockaddr_in send_addr;
-//	struct sockaddr_in recv_addr;
 
 	struct rpata_callback *cbacks;
 
