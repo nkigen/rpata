@@ -36,8 +36,8 @@ bool rpata_setopt(struct rpata *ctx, int opt, char *val);
 bool rpata_start(struct rpata *ctx);
 void rpata_setcallback(struct rpata *ctx, struct rpata_callback *cback);
 int rpata_getsize(struct rpata *ctx);
-void rpata_getpeers(struct rpata *ctx, struct rpata_peer **peers, int *num);
-void rpata_freepeers(struct rpata_peer *peers, int num);
+char **rpata_getpeers(struct rpata *ctx, int *num);
+void rpata_freepeers(struct rpata *ctx, char **peers, int num);
 void rpata_peer_getipaddr(struct rpata_peer *peer, char *ip, int pos);
 void rpata_destroy(struct rpata *ctx);
 

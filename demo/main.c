@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <rpata.h>
 #include <unistd.h>
+#include <string.h>
 
 #define MCAST_IP "225.0.0.37"
 #define MCAST_PORT "18000" 
@@ -41,16 +42,16 @@ int main(int argc, char *argv[])
 	rpata_setcallback(ctx, &cback); 
 	rpata_start(ctx);
 
+	int num = 0;
+	char **peers = NULL;
 	while(1){
-		struct rpata_peer *peers = NULL;
-		int num;
-		rpata_getpeers(ctx, &peers, &num);
-		char ip[20];
+		peers = rpata_getpeers(ctx, &num);
+		printf("******peer list start******\nnum %d\n", num);
 		for(int i = 0; i < num; ++i){
-			rpata_peer_getipaddr(peers, ip, i);
-			printf("ip %s\n", ip);
+			printf("ip %s\n", peers[i]);
 		}
-		rpata_freepeers(peers, num);
+		printf("******peer list end******\n");
+		rpata_freepeers(ctx, peers, num);
 		sleep(5);
 	}
 

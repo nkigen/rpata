@@ -34,6 +34,7 @@ enum rpata_peer_state{
 	RPATA_PEER_ALIVE,
 	RPATA_PEER_AWOL,
 };
+
 struct rpata_peer{
 	uuid_t guid;
 	char *ipaddr;
